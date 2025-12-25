@@ -379,15 +379,6 @@
           s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
 
-        // ②音声が必要なら、ここで追加（失敗しても映像は使える）
-        // ※ どうしても音声が不要なら、このブロックは丸ごと削除してOK
-        try {
-          const a = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-          a.getAudioTracks().forEach(t => s.addTrack(t));
-        } catch (e2) {
-          console.warn('Audio permission failed; continue with video only:', e2);
-        }
-
         stream = s;
 
         preview.srcObject = stream;
@@ -1065,3 +1056,4 @@
 
 </body>
 </html>
+
