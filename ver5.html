@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>映像評価 v2（iOS対応）：録画中は常に全画面画像＋Blendshape解析のみ</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --muted: #94a3b8;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --ink: #e5e7eb;
+    }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Hiragino Kaku Gothic ProN",
+        "Hiragino Sans", "Noto Sans JP", Meiryo, "Apple Color Emoji", "Segoe UI Emoji";
+      margin: 0;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+    h1 { font-weight: 700; font-size: clamp(20px, 4vw, 28px); margin: 8px 0 12px }
+    .card {
+      background: var(--panel);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 6px 30px rgba(0, 0, 0, .2);
+    }
+    .grid { display: grid; gap: 12px; grid-template-columns: 1fr !important; }
+    label { font-size: 14px; color: var(--muted) }
+    input, select, button, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--ink);
+      font-size: 16px
+    }
+    input::placeholder { color: #64748b }
+    button {
+      cursor: pointer;
+      background: #1f2937;
+      border-color: #334155;
+      transition: .15s
+    }
+    button.primary {
+      background: linear-gradient(180deg, #22c55e, #16a34a);
+      border: 0;
+      color: white;
+      font-weight: 700
+    }
+    button:disabled { opacity: .5; cursor: not-allowed }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+    .muted { color: var(--muted) }
+    .ok { color: var(--ok) }
+    .warn { color: var(--warn) }
+    .err { color: var(--err) }
+    video {
+      width: 50%;
+      display: block;
+      margin: 0 auto;
+      background: black;
+      border-radius: 14px;
+      transition: transform .15s ease;
+    }
+    .progress { height: 10px; background: #0b1220; border-radius: 999px; overflow: hidden }
+    .bar { height: 100%; background: linear-gradient(90deg, #34d399, #22d3ee); width: 0% }
+    .table { width: 100%; border-collapse: collapse }
+    .table th, .table td {
+      border-bottom: 1px solid #223049;
+      padding: 8px 6px;
+      text-align: left;
+      font-size: 14px
+    }
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      background: #0b1220;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: .2em .45em
+    }
+    .hint { font-size: 13px; margin-top: 6px }
+    .hint .bad { color: var(--warn) }
+    .hint .good { color: var(--ok) }
+
+    /* Fullscreen overlay */
+    .overlay {
+      position: fixed;
+      z-index: 9999;
+      inset: 0;
+      background: black;
+      display: none;
+    }
+    .overlay img {
+      position: absolute;
+      inset: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .overlay .badge {
+      position: absolute;
+      top: calc(env(safe-area-inset-top, 0) + 8px);
+      left: calc(env(safe-area-inset-left, 0) + 8px);
+      background: rgba(0, 0, 0, 0.5);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #e5e7eb;
+      pointer-events: none;
+    }
+
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #334155;
+      background: #0b1220;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    a { color: #93c5fd; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>映像評価 v2（iOS対応）：20秒×1本（録画中は常に全画面画像・URL固定）</h1>
+    <p class="muted">録画中は<strong>常に</strong>指定画像を<strong>全画面で表示</strong>します。画像URLと解析関連のURLはHTML内に固定されています。</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="grid">
+          <div>
+            <label>被験者ID（ファイル名Prefixとして使用）</label>
+            <input id="participantId" placeholder="例: P001" />
+          </div>
+          <div>
+            <label>撮影カメラ</label>
+            <select id="cameraFacing">
+              <option value="user">インカメラ（自撮り）</option>
+              <option value="environment">アウトカメラ（背面）</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:12px;">
+          <div>
+            <label>カウントダウン（秒）</label>
+            <input id="countdownSec" type="number" min="0" value="10" />
+          </div>
+          <div>
+            <label>録画時間（秒）<span class="muted"> 固定要件: 20秒</span></label>
+            <input id="recordSec" type="number" min="1" value="20" disabled />
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:12px;">
+          <div>
+            <label>製品名</label>
+            <div class="muted" style="margin-top:4px; font-size:16px;">製品A</div>
+            <input id="productName" type="hidden" value="製品A" />
+          </div>
+          <div>
+            <label>録画中に表示する画像（固定設定）</label>
+            <div class="hint">この画像はHTML内の <span class="kbd">ALT_IMAGE_URL</span> で指定されています（ユーザーは変更不可）。</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="btnSetup" class="primary"
+            onclick="window.setupCamera && window.setupCamera()">
+            ① カメラを準備（権限付与）
+          </button>
+          <button id="btnStart" disabled title="未準備の項目があります">② 撮影セッション開始</button>
+          <button id="btnDiag">診断</button>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <span class="pill" id="envPill">環境: 判定中…</span>
+          <span class="pill" id="mimePill">録画形式: 判定中…</span>
+        </div>
+
+        <div id="startHints" class="hint muted"></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; align-items:center; text-align:center; margin-top:10px;">
+        <input id="flipX" type="checkbox" checked />
+        <label for="flipX">プレビューを左右反転（ミラー）表示</label>
+      </div>
+
+      <div class="card">
+        <div style="position:relative">
+          <video id="preview" playsinline muted></video>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div class="progress" style="flex:3">
+            <div class="bar" id="progressBar"></div>
+          </div>
+          <div style="flex:1;text-align:right">
+            <span id="phaseLabel">準備待ち</span> <span class="muted" id="timeLeft"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3 style="margin:0 0 8px">収録クリップ（iOSは「共有」優先 / 常に「開く」リンク表示）</h3>
+      <table class="table" id="clipsTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>製品名</th>
+            <th>長さ</th>
+            <th>ファイル</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="muted" style="margin-top:6px">
+        録画完了後、<strong>iOSでは共有シート</strong>（ファイルに保存 など）を優先します。ブラウザの制限で自動DLが不安定な場合があるため、
+        この表には<strong>常に「開く」リンク</strong>を表示します。録画ごとにBlendshape CSVも保存導線を出します（自動DLが効かない端末は共有/開くで保存）。<br/>
+        ※ 端末/OSにより挙動が異なります。うまくいかない時は「開く」→共有（保存）をお試しください。
+      </div>
+    </div>
+  </div>
+
+  <!-- Fullscreen overlay -->
+  <div id="maskOverlay" class="overlay" aria-hidden="true">
+    <img id="altPreviewFull" alt="録画中の全画面代替表示" />
+    <div class="badge">録画中</div>
+  </div>
+
+  <script>
+    // 固定の録画中オーバーレイ画像URL（ユーザーは変更不可）
+    const ALT_IMAGE_URL = "https://yellowtail-project.github.io/testpage/test_background3.png";
+
+    // ======== ユーティリティ ========
+    const el = (id) => document.getElementById(id);
+    const preview = el('preview');
+    const overlay = el('maskOverlay');
+    const altPreviewFull = el('altPreviewFull');
+    const flipToggle = el('flipX');
+    const btnSetup = el('btnSetup');
+    const btnStart = el('btnStart');
+    const btnDiag = el('btnDiag');
+    const phaseLabel = el('phaseLabel');
+    const timeLeft = el('timeLeft');
+    const progressBar = el('progressBar');
+    const clipsTableBody = document.querySelector('#clipsTable tbody');
+    const startHints = el('startHints');
+    const envPill = el('envPill');
+    const mimePill = el('mimePill');
+
+    let stream = null, recorder = null, chunks = [], supportMime = null, loadedImage = false;
+    let wakeLock = null;
+
+    function isIOS() {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    function setPills() {
+      envPill.textContent = `環境: ${isIOS() ? 'iOS系（Safari想定）' : 'iOS以外'}`;
+      mimePill.textContent = `録画形式: ${supportMime || '未判定（カメラ準備後に判定）'}`;
+    }
+
+    window.addEventListener('error', (e) => {
+      alert('JS Error: ' + (e.message || e.type));
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      alert('Promise Error: ' + (e.reason?.message || e.reason));
+    });
+
+
+    // Flip
+    function applyFlip() { preview.style.transform = flipToggle.checked ? 'scaleX(-1)' : 'none'; }
+    flipToggle.addEventListener('change', applyFlip);
+
+    // 画像の事前ロード（固定URL）
+    async function loadImageFromUrl(url) {
+      if (!url) { loadedImage = false; altPreviewFull.removeAttribute('src'); return false; }
+      return new Promise((resolve) => {
+        const test = new Image();
+        test.onload = () => { altPreviewFull.src = url; loadedImage = true; resolve(true); };
+        test.onerror = () => { loadedImage = false; altPreviewFull.removeAttribute('src'); resolve(false); };
+        test.crossOrigin = 'anonymous';
+        test.src = url;
+      });
+    }
+
+    function unmetReasons() {
+      const reasons = [];
+      if (!el('participantId').value.trim()) reasons.push('被験者IDが未入力');
+      if (!stream) reasons.push('カメラが未準備（「カメラを準備」を押してください）');
+      if (!loadedImage) reasons.push('固定画像の読み込みに失敗（ALT_IMAGE_URL を確認）');
+      return reasons;
+    }
+
+    function updateStartUI() {
+      const reasons = unmetReasons();
+      const ok = reasons.length === 0;
+      btnStart.disabled = !ok;
+      btnStart.title = ok ? '' : ('開始できない理由：\n- ' + reasons.join('\n- '));
+      startHints.innerHTML = reasons.length
+        ? ('<span class="bad">開始できない理由：</span> ' + reasons.map(r => `<span class="bad">${r}</span>`).join(' / '))
+        : '<span class="good">開始可能です。② 撮影セッション開始 を押してください。</span>';
+    }
+    el('participantId').addEventListener('input', updateStartUI);
+
+    function pickSupportedMime() {
+      // iOSはMP4優先（WebMは後回し）
+      const candsIOS = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=h264',
+        'video/mp4'
+      ];
+      // その他はWebM優先
+      const candsOther = [
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4;codecs=h264',
+        'video/mp4'
+      ];
+      const cands = isIOS() ? candsIOS : candsOther;
+
+      for (const m of cands) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+      }
+      return '';
+    }
+
+    function updateProgress(p) { progressBar.style.width = `${Math.max(0, Math.min(100, p * 100))}%`; }
+
+    // Wake Lock（対応ブラウザのみ）
+    async function lockScreen() {
+      try {
+        if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+      } catch (_) {}
+    }
+    async function unlockScreen() {
+      try { await wakeLock?.release(); } catch (_) {}
+      wakeLock = null;
+    }
+
+    async function setupCamera() {
+      phaseLabel.textContent = 'カメラ準備中…';
+      btnSetup.disabled = true;
+
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('HTTPSではありません（SecureContext=false）');
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('このブラウザは getUserMedia に非対応です（アプリ内ブラウザの可能性）');
+        }
+
+        const facing = el('cameraFacing').value;
+
+        // 既存stream停止
+        if (stream) {
+          try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+          stream = null;
+        }
+
+        // iOSで詰まりにくい順：①映像のみ → ②音声追加
+        const videoConstraints = {
+          facingMode: { ideal: facing },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        };
+
+        let s = null;
+
+        // ①まず映像のみで許可を取る（ここが通るかが重要）
+        try {
+          s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        } catch (e1) {
+          // 制約が厳しすぎる場合があるので緩めて再試行
+          s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+
+        // ②音声が必要なら、ここで追加（失敗しても映像は使える）
+        // ※ どうしても音声が不要なら、このブロックは丸ごと削除してOK
+        try {
+          const a = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+          a.getAudioTracks().forEach(t => s.addTrack(t));
+        } catch (e2) {
+          console.warn('Audio permission failed; continue with video only:', e2);
+        }
+
+        stream = s;
+
+        preview.srcObject = stream;
+
+        // iOS対策：play失敗理由を見える化
+        try {
+          await preview.play();
+        } catch (e) {
+          console.warn('preview.play failed:', e);
+          // それでもプレビューは出ることが多いので継続
+        }
+
+        supportMime = pickSupportedMime();
+        phaseLabel.textContent = '準備OK';
+
+      } catch (err) {
+        console.error(err);
+        phaseLabel.textContent = 'カメラ開始に失敗';
+
+        // iOSでよく出るエラーを分かりやすく表示
+        const name = err?.name || '';
+        const msg = err?.message || String(err);
+
+        let hint = msg;
+        if (name === 'NotAllowedError') hint = '権限が拒否されています。Safariのサイト設定でカメラ/マイクを許可してください。';
+        if (name === 'NotFoundError') hint = 'カメラデバイスが見つかりません。';
+        if (name === 'NotReadableError') hint = '他アプリがカメラを使用中の可能性があります。カメラアプリ等を閉じてください。';
+        if (name === 'SecurityError') hint = 'セキュリティ制約でブロックされています（HTTPS/アプリ内ブラウザ/MDM制限など）。';
+
+        alert('カメラ起動に失敗しました：\n' + hint);
+      } finally {
+        btnSetup.disabled = false;
+        applyFlip();
+        updateStartUI();
+        setPills();
+      }
+    }
+
+    btnSetup.addEventListener('click', setupCamera);
+    window.setupCamera = setupCamera;
+
+
+    // Safe filename sanitizer
+    function sanitizeForFilename(s) {
+      return (s || '')
+        .replace(/[\x00-\x1F\x7F]/g, '_')
+        .replace(/[\\/:*?"<>|#%&{}$!'@+`=~;,]/g, '_')
+        .replace(/\s+/g, '_');
+    }
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    // クリップ表に行を追加（常に「開く」リンクを残す）
+    function addClipRow({ seqNum, productName, durationMs, filename, blobUrl, mimeType, kind }) {
+      const tr = document.createElement('tr');
+
+      const info = mimeType?.includes('mp4') ? 'MP4' : 'WebM';
+      const label = kind === 'csv' ? 'CSV' : info;
+
+      tr.innerHTML = `
+        <td>${seqNum}</td>
+        <td>${productName}</td>
+        <td>${Math.round(durationMs/1000)}s</td>
+        <td>
+          <a href="${blobUrl}" target="_blank" rel="noopener">${kind === 'csv' ? '開く（CSV）' : '開く（動画）'}</a>
+          <span class="muted">（${label} / ${sanitizeForFilename(filename)}）</span>
+        </td>
+      `;
+      clipsTableBody.appendChild(tr);
+    }
+
+    // iOS対策：共有（Web Share）→ できなければ従来DL → 最後にURL（開く）を残す
+    async function saveBlobSmart(blob, filename, mime) {
+      const file = new File([blob], filename, { type: mime });
+
+      // 1) Web Share（対応/許可される場合）
+      if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+          // share成功でも「開く」リンク用にURLは作れる（再DL/再共有の導線）
+          const url = URL.createObjectURL(blob);
+          return { method: 'share', url };
+        } catch (_) {
+          // ユーザーキャンセル等 → フォールバックへ
+        }
+      }
+
+      // 2) download属性（iOS Safariは効かないことがある）
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return { method: 'download_or_open', url };
+      } catch (_) {
+        return { method: 'open', url };
+      }
+    }
+
+    async function recordOne(productName) {
+      const countdownSec = Math.max(0, parseInt(el('countdownSec').value || '10', 10));
+      const recordSec = 20;
+
+      // Count down
+      phaseLabel.textContent = `カウントダウン (${productName})`;
+      if (countdownSec === 0) {
+        timeLeft.textContent = '0s';
+        updateProgress(1);
+      } else {
+        for (let t = countdownSec; t > 0; t--) {
+          timeLeft.textContent = `${t}s`;
+          updateProgress((countdownSec - t) / countdownSec);
+          await sleep(1000);
+        }
+        timeLeft.textContent = '0s';
+        updateProgress(1);
+      }
+
+      // Record
+      phaseLabel.textContent = '録画中';
+      updateProgress(0);
+      chunks = [];
+
+      const mime = supportMime || undefined;
+      try {
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) {
+        alert('このブラウザは録画に対応していません（MediaRecorder）');
+        return;
+      }
+
+      let stopped = false;
+      const startAt = Date.now();
+
+      recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
+      recorder.onstop = () => { stopped = true; };
+
+      await lockScreen(); // 録画中スリープ抑止（対応時のみ）
+
+      recorder.start();
+
+      // Always fullscreen mask
+      overlay.style.display = 'block';
+
+      const targetMs = recordSec * 1000;
+      const tickInt = setInterval(() => {
+        const elapsed = Date.now() - startAt;
+        const remain = Math.max(0, targetMs - elapsed);
+        timeLeft.textContent = `${Math.ceil(remain / 1000)}s`;
+        updateProgress(elapsed / targetMs);
+      }, 200);
+
+      await sleep(targetMs);
+
+      try { recorder.stop(); } catch (_) {}
+      for (let k = 0; k < 20 && !stopped; k++) await sleep(100);
+      clearInterval(tickInt);
+
+      await unlockScreen();
+
+      // Hide overlay
+      overlay.style.display = 'none';
+
+      // 実際のmime/typeを確定（空ならiOSはmp4、それ以外はwebm）
+      const actualMime = recorder.mimeType || mime || (isIOS() ? 'video/mp4' : 'video/webm');
+      const blob = new Blob(chunks, { type: actualMime });
+      const durationMs = Date.now() - startAt;
+
+      // filename
+      const id = el('participantId').value.trim() || 'Unknown';
+      const seqNum = clipsTableBody.children.length + 1;
+      const seq = String(seqNum).padStart(2, '0');
+      const safeProd = sanitizeForFilename(productName);
+      const ext = actualMime.includes('mp4') ? 'mp4' : 'webm';
+      const filename = `${id}_${seq}_${safeProd}.${ext}`;
+
+      // 保存導線（iOS: share優先）
+      phaseLabel.textContent = '保存処理中…';
+      const saved = await saveBlobSmart(blob, filename, actualMime);
+
+      // 表に「開く」リンクを必ず追加
+      addClipRow({
+        seqNum,
+        productName,
+        durationMs,
+        filename,
+        blobUrl: saved.url,
+        mimeType: actualMime,
+        kind: 'video'
+      });
+
+      // ▼ 録画後 自動解析（Blendshape CSVのみ）
+      let analysisOk = false;
+
+      if (window.processAnalysis) {
+          const base = filename.replace(/\.(webm|mp4)$/i, "");
+          phaseLabel.textContent = '解析中…';
+          timeLeft.textContent = '';
+          updateProgress(0);
+
+          try {
+            const csvBlob = await window.processAnalysis(blob, {
+              filenameBase: base,
+              maxAnalyticFps: 30
+            });
+
+            if (!(csvBlob instanceof Blob) || csvBlob.size === 0) {
+              phaseLabel.textContent = '解析に失敗しました（CSV生成なし）';
+            } else {
+              // CSVの保存導線（share→DL→開く）
+              const csvName = `${base}_blendshape.csv`;
+              const csvSaved = await saveBlobSmart(csvBlob, csvName, 'text/csv;charset=utf-8');
+
+              // 必ず「開く（CSV）」行をテーブルに追加（これが無いと見失う）
+              addClipRow({
+                seqNum,
+                productName,
+                durationMs,
+                filename: csvName,
+                blobUrl: csvSaved.url,
+                mimeType: 'text/csv',
+                kind: 'csv'
+              });
+
+              analysisOk = true;
+            }
+          } catch (e) {
+            console.error("[analysis] processAnalysis error:", e);
+            phaseLabel.textContent = `解析に失敗しました（${e?.message || e}）`;
+          }
+        } else {
+          phaseLabel.textContent = '録画完了（解析モジュール未ロード）';
+        }
+
+        // 解析が成功したときだけ「終了しました」にする（失敗時は失敗表示のまま）
+        if (analysisOk) {
+          phaseLabel.textContent = '録画と解析が終了しました';
+          updateProgress(1);
+        }
+
+    btnStart.addEventListener('click', async () => {
+      // 固定画像の読み込みを最終確認
+      const ok = await loadImageFromUrl(ALT_IMAGE_URL);
+      if (!ok) { alert('固定画像URL (ALT_IMAGE_URL) を確認してください。'); return; }
+
+      const id = el('participantId').value.trim();
+      const productName = el('productName').value.trim() || 'Product';
+      if (!id) { alert('被験者IDを入力してください'); return; }
+      if (!stream) { alert('先に「カメラを準備」を押してください。'); return; }
+
+      btnStart.disabled = true;
+      el('participantId').disabled = true;
+      el('cameraFacing').disabled = true;
+      btnSetup.disabled = true;
+
+      try {
+        await recordOne(productName);
+      } finally {
+        btnStart.disabled = false;
+        el('participantId').disabled = false;
+        el('cameraFacing').disabled = false;
+        btnSetup.disabled = false;
+        updateStartUI();
+      }
+    });
+
+    async function updateStartUIInit() {
+      await loadImageFromUrl(ALT_IMAGE_URL);
+      supportMime = pickSupportedMime();
+      updateStartUI();
+      applyFlip();
+      setPills();
+    }
+
+    document.addEventListener('DOMContentLoaded', updateStartUIInit);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && preview.srcObject) {
+        preview.play().catch(() => {});
+      }
+    });
+
+    // Diagnose
+    btnDiag.addEventListener('click', async () => {
+      try {
+        const secure = window.isSecureContext;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          alert('enumerateDevices() が利用できません。');
+          return;
+        }
+        const list = await navigator.mediaDevices.enumerateDevices();
+        const summary = list.map(d =>
+          `${d.kind} : ${d.label || '(未許可)'} : ${d.deviceId ? d.deviceId.slice(0, 6) + '…' : ''}`
+        ).join('\n');
+
+        const mr = !!window.MediaRecorder;
+        const share = !!navigator.share;
+        const canShareFiles = !!(navigator.canShare && (() => {
+          try { return navigator.canShare({ files: [new File(["x"], "x.txt", { type: "text/plain" })] }); }
+          catch (_) { return false; }
+        })());
+
+        alert(
+          'SecureContext: ' + secure + '\n' +
+          'iOS判定: ' + isIOS() + '\n' +
+          'MediaRecorder: ' + mr + '\n' +
+          'WebShare: ' + share + '\n' +
+          'WebShare(files): ' + canShareFiles + '\n' +
+          '推奨mime: ' + (supportMime || '(未判定)') + '\n\n' +
+          'デバイス一覧:\n' + summary + '\n\n' +
+          '※ (未許可) の場合、サイトのカメラ/マイク許可が必要です。'
+        );
+      } catch (e) {
+        alert('診断に失敗しました: ' + (e && e.message ? e.message : e));
+      }
+    });
+  </script>
+
+  <!-- ▼ 解析用依存: MediaPipe Tasks（FaceLandmarker）のみを読み込み・初期化し、processAnalysis() を公開 -->
+  <script type="module">
+    import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.13/vision_bundle.mjs";
+
+    // WASMローダ
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.13/wasm"
+    );
+
+    // FaceLandmarker（blendshape出力ON）
+    const faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      outputFaceBlendshapes: true
+    });
+
+    // iOS対策：seek後にフレームが確実に更新されるまで待つ
+    function waitNextFrame(video) {
+      return new Promise((resolve) => {
+        if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+          video.requestVideoFrameCallback(() => resolve());
+        } else {
+          setTimeout(resolve, 30);
+        }
+      });
+    }
+
+    async function seekTo(video, t) {
+      await new Promise((res) => {
+        const onSeek = () => res();
+        video.addEventListener("seeked", onSeek, { once: true });
+        video.currentTime = t;
+      });
+      // iOS Safariではseeked直後に描画が追いつかないことがある
+      await waitNextFrame(video);
+    }
+
+    // 実効fpsを推定（requestVideoFrameCallback 利用）
+    async function detectVideoFps(video, maxSamples = 20, minDuration = 0.5) {
+      return new Promise((resolve) => {
+        if (!("requestVideoFrameCallback" in HTMLVideoElement.prototype)) {
+          resolve(30);
+          return;
+        }
+        let firstTime = null;
+        let lastTime = null;
+        let count = 0;
+
+        function step(now, meta) {
+          if (firstTime === null) {
+            firstTime = meta.mediaTime;
+            lastTime = meta.mediaTime;
+          } else {
+            lastTime = meta.mediaTime;
+            count++;
+          }
+          const dur = lastTime - firstTime;
+          if ((dur >= minDuration && count >= 5) || count >= maxSamples) {
+            const fps = dur > 0 ? count / dur : 0;
+            video.pause();
+            video.currentTime = 0;
+            resolve(fps || 30);
+            return;
+          }
+          video.requestVideoFrameCallback(step);
+        }
+
+        video.play().then(() => {
+          video.requestVideoFrameCallback(step);
+        }).catch(() => {
+          resolve(30);
+        });
+      });
+    }
+
+    // 公開API：録画Blob → Blendshape CSV を返す（呼び出し側で共有/保存導線）
+    // opts: { filenameBase?: string, maxAnalyticFps?: number }
+    window.processAnalysis = async function processAnalysis(videoBlob, opts = {}) {
+      const { filenameBase = "analysis", maxAnalyticFps = 30 } = opts;
+
+      const phaseLabel = document.getElementById("phaseLabel");
+      const setStatus = (s) => { if (phaseLabel) phaseLabel.textContent = s; };
+
+      // どこで止まっているか分かるように段階表示（ログも）
+      const log = (s) => { console.log("[analysis]", s); setStatus(s); };
+
+      // videoをmetadataまで確実に進める（タイムアウト付き）
+      async function loadVideoFromBlob(blob, label) {
+        const v = document.createElement("video");
+        v.muted = true;
+        v.playsInline = true;
+
+        // iOSで type が空/ズレると怪しいことがあるので、念のため補正
+        const mime = blob.type || "video/mp4";
+        const safeBlob = new Blob([await blob.arrayBuffer()], { type: mime });
+        const url = URL.createObjectURL(safeBlob);
+        v.src = url;
+
+        log(`解析準備…（${label}: metadata待ち）`);
+
+        await new Promise((res, rej) => {
+          const t = setTimeout(() => rej(new Error("metadata timeout")), 15000);
+    
+          const cleanup = () => {
+            clearTimeout(t);
+            v.onloadedmetadata = null;
+            v.onerror = null;
+        };
+
+          v.onloadedmetadata = () => { cleanup(); res(); };
+          v.onerror = () => { cleanup(); rej(new Error("video error")); };
+        });
+
+        // iOS対策：一度play/pauseしてデコードを“解錠”（失敗しても続行）
+        log(`解析準備…（${label}: デコード準備）`);
+        try { await v.play(); v.pause(); } catch (_) {}
+
+        return { v, url };
+      }
+
+      // iOSのseeked不安定対策：次フレーム待ち
+      function waitNextFrame(video) {
+        return new Promise((resolve) => {
+          if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+            video.requestVideoFrameCallback(() => resolve());
+          } else {
+            setTimeout(resolve, 30);
+          }
+        });
+      }
+      async function seekTo(video, t) {
+        await new Promise((res, rej) => {
+          const timeout = setTimeout(() => rej(new Error("seek timeout")), 8000);
+          video.addEventListener("seeked", () => { clearTimeout(timeout); res(); }, { once: true });
+          video.currentTime = t;
+        });
+        await waitNextFrame(video);
+      }
+
+      // fps推定（そのまま）
+      async function detectVideoFps(video, maxSamples = 20, minDuration = 0.5) {
+        return new Promise((resolve) => {
+          if (!("requestVideoFrameCallback" in HTMLVideoElement.prototype)) {
+            resolve(30);
+            return;
+          }
+          let firstTime = null;
+          let lastTime = null;
+          let count = 0;
+
+          function step(now, meta) {
+            if (firstTime === null) {
+              firstTime = meta.mediaTime;
+              lastTime = meta.mediaTime;
+            } else {
+              lastTime = meta.mediaTime;
+              count++;
+            }
+            const dur = lastTime - firstTime;
+            if ((dur >= minDuration && count >= 5) || count >= maxSamples) {
+              const fps = dur > 0 ? count / dur : 0;
+              video.pause();
+              video.currentTime = 0;
+              resolve(fps || 30);
+              return;
+            }
+            video.requestVideoFrameCallback(step);
+          }
+
+          video.play().then(() => {
+            video.requestVideoFrameCallback(step);
+          }).catch(() => {
+            resolve(30);
+          });
+        });
+      }
+
+      // ここから本処理
+      log("解析中（表情推定）");
+
+      let v, url;
+      try {
+        // まず通常ロード（ArrayBufferコピー済みなので安定寄り）
+        ({ v, url } = await loadVideoFromBlob(videoBlob, "1st"));
+      } catch (e1) {
+        // ここで止まると「解析中（表情推定）」のままになりがちなので、フォールバック明示
+        console.warn("[analysis] 1st load failed:", e1);
+        log("解析準備が長引いています…（再試行）");
+
+        try {
+          // フォールバック：もう一度コピーし直して再トライ（iOSで通るケースあり）
+          const buf = await videoBlob.arrayBuffer();
+          const mime = videoBlob.type || "video/mp4";
+          const blob2 = new Blob([buf], { type: mime });
+          ({ v, url } = await loadVideoFromBlob(blob2, "2nd"));
+        } catch (e2) {
+          console.error("[analysis] 2nd load failed:", e2);
+          log("解析に失敗しました（動画の読み込みができません）");
+          return null; // 呼び出し側でCSV保存導線を出さない
+        }
+      }
+
+      const duration = v.duration;
+      const width = v.videoWidth || 640;
+      const height = v.videoHeight || 360;
+
+      log(`解析準備…（duration=${duration.toFixed(2)}s / ${width}x${height}）`);
+
+      let detectedFps = 30;
+      try { detectedFps = await detectVideoFps(v); } catch (_) { detectedFps = 30; }
+      const analyticFps = Math.max(1, Math.min(maxAnalyticFps, Math.round(detectedFps || 30)));
+
+      // canvas入力（安定）
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      const totalFrames = Math.max(1, Math.floor(duration * analyticFps));
+      const times = Array.from({ length: totalFrames }, (_, i) =>
+        Math.min(i / analyticFps, Math.max(0, duration - 1e-4))
+      );
+
+      let csvHeader = null;
+      const csvRows = [];
+      csvRows.push(["timestamp_ms"]);
+
+      // 進捗バーも動かす（あれば）
+      const progressBar = document.getElementById("progressBar");
+      const setProgress = (p) => { if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, p * 100))}%`; };
+
+      log("解析中… 0%");
+      setProgress(0);
+
+      for (let i = 0; i < times.length; i++) {
+        const t = times[i];
+
+        try {
+          await seekTo(v, t);
+        } catch (e) {
+          console.warn("[analysis] seek failed at", t, e);
+          // seekが詰まる端末もあるので、スキップして続行（完全停止を避ける）
+          continue;
+        }
+
+        ctx.drawImage(v, 0, 0, width, height);
+
+        const nowMs = Math.round(t * 1000);
+        const result = faceLandmarker.detectForVideo(canvas, nowMs);
+
+        let row = [String(nowMs)];
+        if (result?.faceBlendshapes?.length) {
+          const cats = result.faceBlendshapes[0].categories || [];
+          if (!csvHeader) {
+            csvHeader = ["timestamp_ms", ...cats.map(c => c.categoryName)];
+            csvRows[0] = csvHeader;
+          }
+          const values = cats.map(c => c.score != null ? c.score.toFixed(6) : "");
+          row = [String(nowMs), ...values];
+        }
+        csvRows.push(row);
+
+        // 10%刻みで更新（＋プログレスバーは毎回更新）
+        const p = (i + 1) / totalFrames;
+        setProgress(p);
+
+        const step = Math.max(1, Math.floor(totalFrames / 10));
+        if (i % step === 0) {
+          const pct = Math.round(p * 100);
+          log(`解析中… ${pct}%`);
+        }
+      }
+
+      const csvText = csvRows.map(cols =>
+        cols.map(v => (String(v).includes(",") ? `"${String(v).replace(/"/g, '""')}"` : (v ?? ""))).join(",")
+      ).join("\n");
+
+      try { URL.revokeObjectURL(url); } catch (_) {}
+
+      log("解析完了（CSV保存導線を表示）");
+      setProgress(1);
+
+      return new Blob([csvText], { type: "text/csv;charset=utf-8" });
+    };
+
+      </script>
+      <!-- ▲ 解析用依存ここまで ▲ -->
+
+</body>
+</html>
