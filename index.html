@@ -365,9 +365,10 @@
         // iOSで詰まりにくい順：①映像のみ → ②音声追加
         const videoConstraints = {
           facingMode: { ideal: facing },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 640 },
+          height: { ideal: 480 }
         };
+
 
         let s = null;
 
@@ -504,8 +505,16 @@
       chunks = [];
 
       const mime = supportMime || undefined;
+      const recOpts = {};
+      if (mime) recOpts.mimeType = mime;
+
+      // ★ここが肝：かなり低めから試す（iPhoneなら 600kbps〜1Mbps がおすすめ）
+      recOpts.videoBitsPerSecond = 800_000;   // 0.8Mbps
+      // 音声なしなら不要。音声ありなら 64kbps くらいに。
+      /* recOpts.audioBitsPerSecond = 64_000; */
+
       try {
-        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        recorder = new MediaRecorder(stream, Object.keys(recOpts).length ? recOpts : undefined);
       } catch (e) {
         alert('このブラウザは録画に対応していません（MediaRecorder）');
         return;
@@ -1056,4 +1065,5 @@
 
 </body>
 </html>
+
 
